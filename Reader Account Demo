@@ -1,0 +1,139 @@
+--This demo is to show how you would create a reader account and provision it for new users to use effectively
+--Creator: Marty St. John
+--Creation Date: 5/3/22
+--Please don't fire me Jeff
+
+--set context in main Snowflake account
+use role accountadmin;
+
+--create reader account
+create managed account readerdemo1
+admin_name = readeradmin1, admin_password = 'Reader1!', type = reader;
+
+--note account details
+--accountname WZA04078 --change with your generated account name
+--login url: https://wza04078.snowflakecomputing.com --change with generated URL
+--creds
+--user: readeradmin1 --change with your generated username
+--pass: Reader1! --change with your generated password
+
+--create test data to share
+create or replace database shareddb;
+create or replace schema demo;
+create or replace table demo
+(ID INT,
+ Name varchar(20),
+ Sport varchar(20) );
+ 
+ --Fill table with data
+ --create demo_wh if does not exist
+ create or replace demo_wh;
+ use warehouse demo_wh;
+ 
+ insert into shareddb.demo.demo Values 
+ (1, 'Kurt', 'Football'),
+ (2, 'Marty', 'Football'),
+ (3, 'Bob', 'Cycling');
+
+--test new table
+select * from shareddb.demo.demo;
+
+--create share for reader account
+create or replace share externalshare;
+
+--grant share to reader account
+grant usage on database shareddb to share externalshare;
+grant usage on schema shareddb.demo to share externalshare;
+grant select on table shareddb.demo.demo to share externalshare;
+
+--confirm
+show grants to share externalshare;
+
+--add accounts to the share
+use role accountadmin;
+alter share externalshare add accounts = WZA04078;
+
+--confirm addition
+show shares;
+
+--Now we go to the new reader account
+--go to the URL you generated when you created the account and login
+
+--label your first worksheet "Admin Queries" or whatever the hell you want to name it to remember this is where you do admin things
+use role accountadmin;
+--create custom role to be used in reader account
+create or replace role reader;
+
+--grant custom role accordingly
+grant role accountadmin to role reader;
+grant role reader to user readeradmin1;
+
+--create warehouse for new role and users to use. Or don't...you don't have to do any of this
+use role accountadmin;
+create or replace warehouse reader_wh;
+
+--grant usage for new warehouse you just created
+grant all on warehouse reader_wh to role reader;
+
+--create database from shared database from your main account
+CREATE DATABASE "EXTDEMOSHARE" FROM SHARE CSA34984."EXTERNALSHARE";
+
+--Grant privileges to reader role if you want to
+grant imported privileges on database extdemoshare to role reader;
+
+--Test Share you just created with role you just created
+--set your damn context if you want this to work
+use role reader;
+use warehouse reader_wh;
+use database extdemoshare;
+use schema demo;
+
+--select from your newly shared table
+select * from demo;
+
+--Now that the share is ready, create test user and enable access
+use role securityadmin; --important to use this role or you'll screw everything up
+
+--create your new user 
+create user if not exists Ted password = 'Testpass1!' email = 'ted@snowflakedemo.com';
+alter user Ted set default_role = public;
+
+--grant privileges to Ted
+grant role reader to user Ted;
+alter user Ted set default_role = Reader;
+
+--Create resource monitor for Reader_WH
+
+--set context
+use role accountadmin;
+
+CREATE OR REPLACE RESOURCE MONITOR "READERRM" WITH 
+CREDIT_QUOTA = 20;
+
+--add thresholds & triggers to resource monitor
+alter resource monitor readerrm
+set 
+frequency = 'MONTHLY', 
+start_timestamp = 'IMMEDIATELY', 
+end_timestamp = null 
+ TRIGGERS 
+ ON 90 PERCENT DO SUSPEND 
+ ON 99 PERCENT DO SUSPEND_IMMEDIATE 
+ ON 80 PERCENT DO NOTIFY;
+ALTER WAREHOUSE "READER_WH" SET RESOURCE_MONITOR = "READERRM";
+
+--time to test all the fun things you created
+--go to your Snowflake reader account URL and login with your new user 
+
+--set context in your new worksheet
+use role reader;
+use warehouse reader_wh;
+
+--test context
+use database extdemoshare;
+use schema demo;
+
+--test table from share
+select * from demo;
+
+--that's it. Pretty cool huh?
