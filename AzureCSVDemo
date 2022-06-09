@@ -1,0 +1,113 @@
+--Demo to load data from Azure storage container to Snowflake
+--https://docs.snowflake.com/en/user-guide/data-load-prepare.html
+
+use role sysadmin;
+
+--create virtual warehouse for ingestion
+--https://docs.snowflake.com/en/sql-reference/sql/create-warehouse.html
+create or replace warehouse <warehousename>;
+
+--Create database
+--https://docs.snowflake.com/en/sql-reference/sql/create-database.html
+create or replace database <databasename>;
+
+--create schema
+--https://docs.snowflake.com/en/sql-reference/sql/create-schema.html
+create or replace schema <schemaname>;
+
+--Configuring Azure to load data to Snowflake
+--https://docs.snowflake.com/en/user-guide/data-load-azure-config.html
+
+--Only create if not already in place:
+--https://docs.snowflake.com/en/user-guide/data-load-azure-config.html#step-1-create-a-cloud-storage-integration-in-snowflake
+--create storage integration to azure
+use role accountadmin;
+create or replace storage integration <integrationname>
+  type = external_stage
+  storage_provider = azure
+  enabled = true
+  azure_tenant_id = ''--get tenant id from Azure AD
+  storage_allowed_locations = ('','azure://container.blob.core.windows.net/folder') --Add location of blob container to ingest from
+  ;
+ --allow sysadmin to use integration
+grant usage on integration <integrationname> to role sysadmin;
+
+  --get azure_multi_tenant_app_name (line 7 from query result)
+  --https://docs.snowflake.com/en/user-guide/data-load-azure-config.html
+ desc storage integration <integrationname>;
+ --storage account -> Container -> select container -> access control -> role assignments -> add role assignment -> Storage Blob Data Reader & Storage Blob Data Contributor
+ --Click save and wait for Azure to configure service principal
+ --Copy everything in front of _ in line 7 
+ --storage account -> Container -> select container -> access control -> role assignments -> search that string starting with "SnowflakePAC..." ->
+
+--create a csv file format to ingest csv files
+--https://docs.snowflake.com/en/sql-reference/sql/create-file-format.html
+use role sysadmin;
+create or replace file format <formatname> 
+type = 'CSV' 
+field_delimiter = ',' 
+skip_header = 1;
+
+--create azure external stage
+--https://docs.snowflake.com/en/user-guide/data-load-azure-create-stage.html
+create or replace stage <stagename>
+storage_integration = azure_int --enter the storage integration you've created
+url = 'azure://container.blob.core.windows.net/folder/' --enter your Azure container
+file_format = <fileformat>;
+
+--list files in ext stage
+ls @<stagename>;
+
+--show new db objects
+use warehouse <warehousename>;
+use database <databasename>;
+use schema <schemaname>;
+
+--increase warehouse size
+alter warehouse <warehousename> set warehouse_size = 'medium';
+
+--create target table
+https://docs.snowflake.com/en/sql-reference/sql/create-table.html
+
+create or replace TABLE DemoTrips (
+	TRIPID NUMBER(38,0),
+	STARTTIME TIMESTAMP_NTZ(9),
+	ENDTIME TIMESTAMP_NTZ(9),
+	DURATION NUMBER(18,0),
+	START_STATION_ID NUMBER(38,0),
+	END_STATION_ID NUMBER(38,0),
+	BIKEID VARCHAR(16777216),
+	BIKE_TYPE VARCHAR(16777216),
+	RIDERID NUMBER(38,0),
+	RIDER_NAME VARCHAR(16777216),
+	DOB DATE,
+	GENDER VARCHAR(16777216),
+	MEMBER_TYPE VARCHAR(16777216),
+	PAYMENT VARCHAR(16777216),
+	PAYMENT_TYPE VARCHAR(16777216),
+	PAYMENT_NUM VARCHAR(16777216)
+);
+
+--show new empty table
+select * from <tablename>;
+
+--copy from azure stage
+--https://docs.snowflake.com/en/user-guide/data-load-azure-copy.html
+copy into <tablename>
+from @<stagename>;
+--from '@<stagename>/<container>';
+
+--query newly loaded data
+select count(*) from <tablename>;
+select * from <tablename> limit 100;
+
+--Troubleshooting any loading issues
+--https://docs.snowflake.com/en/user-guide/data-load-bulk-ts.html
+
+
+--cleanup if necessary
+use role accountadmin;
+drop database <databasename>;
+drop integration <integrationname>;
+drop warehouse <warehousename>;
+
