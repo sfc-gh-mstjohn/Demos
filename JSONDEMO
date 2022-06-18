@@ -1,0 +1,123 @@
+/*
+Snowflake objects to cover in demo:
+- Storage Integrations
+- Stages
+- Loading JSON data from staged data in cloud storage (AWS S3)
+- Copying into variant data columns
+- Creating structured table to load JSON data into
+- Copying JSON data into structured table to use for ad hoc analysis and reporting
+
+//--Create storage integration if we haven't already
+//--https://docs.snowflake.com/en/user-guide/data-load-s3-config-storage-integration.html
+
+//create storage integration <intname>
+//  type = external_stage
+//  storage_provider = s3
+//  enabled = true
+//  storage_aws_role_arn = 'arn:aws:iam::123456789:role/rolename' --switch out with your aws role arn
+//  storage_allowed_locations = ('s3://bucket')
+////  storage_blocked_locations = ('s3://bucket/path/path/', 's3://mybucket2/mypath2/sensitivedata/');
+//;
+*/
+
+/**** Set appropriate context for database.schema*****/
+use role accountadmin;
+//Create load warehouse if not already created
+//Create or replace warehouse <warehousename>;
+use warehouse load_wh;
+-- Create database as target
+create or replace database <databasename>;
+--Create target schema
+create or replace schema <schemaname>;
+
+--create stage using your integration and bucket
+--Snowflake doc on external stages: https://docs.snowflake.com/en/user-guide/data-load-s3-create-stage.html
+create or replace stage <stagename>
+storage_integration = <intname> --enter the storage integration you've created
+url = 's3://bucket/folder' --enter your S3 bucket
+file_format = (type = json); --this is the key part
+
+--list files in stage
+ls @<stagename>;
+
+--Check singular file (skip if you don't need)
+ls @<stagename>/<filename>;
+
+--Test pulling data from file
+Select $1 from '@<stagename>/<filename>';
+
+--create table with variant data type
+create or replace table <tablename> --name table whatever you'd like
+(json_data variant); --load full json payload into one variant column
+
+--copy into table 
+--you can copy whatever you'd like from the folder or the folder entirely
+copy into <tablename>
+from '@<stagename>/<filename>'
+;
+
+--test select from target table
+select * from <tablename> limit 5;
+
+--Query from variant column
+--Use dot notation to pull out fields from JSON array
+--Below is example of citibike data
+select 
+json_data:BIKEID 
+,json_data:BIRTH_YEAR
+,json_data:END_BOROUGH
+,json_data:END_LAT
+,json_data:END_LON
+,json_data:END_NEIGHBORHOOD
+,json_data:END_REGION
+,json_data:END_STATION
+,json_data:END_STATION_ID
+from jsondemo ;
+
+--create structured table
+--once again below is for citibike sample data
+create or replace table <tablename>
+(
+ BIKEID number
+,BIRTH_YEAR number 
+,END_BOROUGH string
+,END_LAT number
+,END_LON number
+,END_NEIGHBORHOOD string
+,END_REGION string
+,END_STATION_ID number
+);
+
+--copy into structured table - pull out JSON objects on ingest
+--example using dot notation with citibike data
+copy into citibikejson
+from
+(select 
+ $1:BIKEID 
+,$1:BIRTH_YEAR
+,$1:END_BOROUGH
+,$1:END_LAT
+,$1:END_LON
+,$1:END_NEIGHBORHOOD
+,$1:END_REGION
+,$1:END_STATION_ID
+from '@<stagename>/<filename>');
+
+--select from structured table
+select * from <tablename>;
+
+--Create view for end-user reporting
+--pull from structured table with sample citibike columns
+Create view <viewname> as
+(select
+  BIKEID 
+,BIRTH_YEAR 
+,END_BOROUGH 
+,END_LAT 
+,END_LON 
+,END_NEIGHBORHOOD 
+,END_REGION 
+,END_STATION_ID 
+from <tablename>)
+;
+
